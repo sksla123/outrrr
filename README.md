@@ -1,88 +1,160 @@
 # outrrr
 
-> A robust, rate-limited, and context-windowed stdout-to-Discord log streaming proxy powered by Rust and Shoutrrr.
+> **A lightweight, rate-limited stdout/stderr log streaming proxy for Discord, powered by Rust and Shoutrrr.**
 
-`outrrr`는 로컬 명령어, 백그라운드 스크립트 또는 Docker 컨테이너의 실시간 `stdout`/`stderr`를 디스코드 웹후크로 안전하게 전달하는 로그 프록시입니다.
-
-과도한 로그 전송으로 인한 Discord API Rate Limit을 방지하기 위해 **Context Window**, **Rate Limiting**, **Cooldown** 기능을 제공합니다.
+`outrrr` captures real-time logs from Docker containers or any command-line application and forwards them to Discord via webhooks. It protects against Discord API rate limits using **context-window buffering**, **message rate limiting**, and an **automatic cooldown mechanism**, making it suitable for long-running services and production environments.
 
 ---
 
 ## Features
 
-- 실시간 stdout/stderr 스트리밍
-- Context Window 기반 버퍼링
-- Discord Rate Limit 보호
-- 자동 Cooldown
-- Docker Socket Proxy 지원
-- 시작/종료 알림 전송
-- Shoutrrr 기반 Notification
+* **Real-time log streaming**
+
+  * Streams `stdout` and `stderr` directly to Discord.
+
+* **Context Window buffering**
+
+  * Buffers logs until either:
+
+    * the accumulated text reaches a configured size, or
+    * a configurable timeout expires.
+
+* **Discord Rate Limit protection**
+
+  * Prevents excessive webhook requests.
+
+* **Automatic Cooldown**
+
+  * Drops incoming logs temporarily when the configured rate limit is exceeded.
+
+* **Docker-friendly**
+
+  * Supports monitoring Docker containers through a Docker Socket Proxy.
+
+* **Lifecycle notifications**
+
+  * Sends startup and shutdown notifications automatically.
+
+---
+
+## Architecture
+
+```text
+                  docker logs -f
+                        │
+                        ▼
+                +----------------+
+                |    outrrr      |
+                |----------------|
+                | Context Window |
+                | Rate Limiter   |
+                | Cooldown       |
+                +----------------+
+                        │
+                        ▼
+                   Shoutrrr
+                        │
+                        ▼
+               Discord Webhook
+```
 
 ---
 
 ## Quick Start
 
-### docker-compose.yml
+### Requirements
 
-~yaml
+* Docker
+* Docker Compose
+
+---
+
+### Configuration
+
+```yaml
 services:
   outrrr:
     build: .
+
     environment:
       TARGET_CONTAINER: my-backend-app
       DOCKER_HOST: tcp://docker-proxy:2375
-      NOTIFY_URL: discord://your_webhook_id@your_webhook_token
+      NOTIFY_URL: discord://YOUR_WEBHOOK_ID@YOUR_WEBHOOK_TOKEN
 
       CONTEXT_LENGTH: 1800
       CONTEXT_WINDOW_DURATION: 30s
 
       RATE_LIMIT_MSG_PER_MINUTE: 2
       COOL_DOWN_DURATION: 30s
-~
-
-빌드 및 실행
-
-~bash
-docker compose up --build -d
-~
+```
 
 ---
 
-## Configuration
+### Build
 
-| Variable | Default | Description |
-|-----------|----------|-------------|
-| `NOTIFY_URL` | Required | Discord webhook URL |
-| `TARGET_CONTAINER` | Required | Target container name or ID |
-| `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker endpoint |
-| `CONTEXT_LENGTH` | `1800` | Flush when accumulated text exceeds this size |
-| `CONTEXT_WINDOW_DURATION` | `30s` | Flush after this idle window |
-| `RATE_LIMIT_MSG_PER_MINUTE` | `2` | Maximum Discord messages per minute |
-| `COOL_DOWN_DURATION` | `30s` | Drop logs during cooldown after rate limit |
+```bash
+docker compose up --build -d
+```
+
+---
+
+## Configuration Reference
+
+| Variable                    | Required |            Default            | Description                                  |
+| --------------------------- | :------: | :---------------------------: | -------------------------------------------- |
+| `NOTIFY_URL`                |     ✅    |               -               | Discord webhook URL                          |
+| `TARGET_CONTAINER`          |     ✅    |               -               | Docker container to monitor                  |
+| `DOCKER_HOST`               |     ❌    | `unix:///var/run/docker.sock` | Docker endpoint                              |
+| `CONTEXT_LENGTH`            |     ❌    |             `1800`            | Flush buffer after this many characters      |
+| `CONTEXT_WINDOW_DURATION`   |     ❌    |             `30s`             | Flush after timeout if buffer is not empty   |
+| `RATE_LIMIT_MSG_PER_MINUTE` |     ❌    |              `2`              | Maximum Discord messages per minute          |
+| `COOL_DOWN_DURATION`        |     ❌    |             `30s`             | Time spent dropping logs after rate limiting |
 
 ---
 
 ## How It Works
 
-1. `docker logs -f` 또는 파이프로 전달된 stdout을 읽습니다.
-2. 로그를 Context Window에 누적합니다.
-3. 아래 조건 중 하나를 만족하면 Discord로 전송합니다.
+1. Reads log output from `stdin` or `docker logs -f`.
+2. Buffers incoming logs in a context window.
+3. Flushes the buffer when **either**:
 
-- 버퍼 길이 ≥ `CONTEXT_LENGTH`
-- 버퍼가 비어있지 않은 상태에서 `CONTEXT_WINDOW_DURATION` 경과
+   * the configured buffer size is reached, or
+   * the configured timeout expires.
+4. Sends the buffered logs to Discord.
+5. If the configured message rate is exceeded:
 
-4. 분당 전송 횟수가 제한을 초과하면
+   * sends a warning,
+   * enters cooldown mode,
+   * drops logs until cooldown ends.
 
-- 경고 메시지 전송
-- `COOL_DOWN_DURATION` 동안 로그 폐기
-- 이후 자동 복구
+---
+
+## Examples
+
+### Docker
+
+```bash
+docker logs -f my-container | outrrr
+```
+
+### Any CLI application
+
+```bash
+python server.py 2>&1 | outrrr
+```
+
+### Shell script
+
+```bash
+./backup.sh 2>&1 | outrrr
+```
 
 ---
 
 ## Project Structure
 
-~text
-outrrr/
+```text
+outrrr
 ├── Cargo.toml
 ├── Dockerfile
 ├── docker-compose.yml
@@ -93,49 +165,29 @@ outrrr/
     ├── main.rs
     ├── notify.rs
     └── stream.rs
-~
+```
 
 ---
 
-## Architecture
+## Why outrrr?
 
-~text
-docker logs -f
-        │
-        ▼
-+------------------+
-|     outrrr       |
-|------------------|
-| Context Window   |
-| Rate Limiter     |
-| Cooldown         |
-+------------------+
-        │
-        ▼
-   Shoutrrr
-        │
-        ▼
- Discord Webhook
-~
+Unlike simple webhook loggers, **outrrr** is designed to operate safely in production by reducing webhook traffic while preserving useful logging context.
+
+Its buffering strategy minimizes API requests without sacrificing log readability, and the built-in cooldown mechanism prevents runaway logging from overwhelming Discord.
 
 ---
 
-## Example
+## Built With
 
-~bash
-docker logs -f my-container | outrrr
-~
-
-또는
-
-~bash
-python server.py 2>&1 | outrrr
-~
+* Rust
+* Tokio
+* Shoutrrr
+* Docker
+* Docker Socket Proxy
 
 ---
 
 ## License
 
 MIT
-
 
