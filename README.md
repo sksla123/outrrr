@@ -24,7 +24,7 @@
 
 ### docker-compose.yml
 
-~~yaml
+~yaml
 services:
   outrrr:
     build: .
@@ -38,13 +38,13 @@ services:
 
       RATE_LIMIT_MSG_PER_MINUTE: 2
       COOL_DOWN_DURATION: 30s
-~~
+~
 
 빌드 및 실행
 
-~~bash
+~bash
 docker compose up --build -d
-~~
+~
 
 ---
 
@@ -81,7 +81,7 @@ docker compose up --build -d
 
 ## Project Structure
 
-~~text
+~text
 outrrr/
 ├── Cargo.toml
 ├── Dockerfile
@@ -93,13 +93,13 @@ outrrr/
     ├── main.rs
     ├── notify.rs
     └── stream.rs
-~~
+~
 
 ---
 
 ## Architecture
 
-~~text
+~text
 docker logs -f
         │
         ▼
@@ -116,24 +116,25 @@ docker logs -f
         │
         ▼
  Discord Webhook
-~~
+~
 
 ---
 
 ## Example
 
-~~bash
+~bash
 docker logs -f my-container | outrrr
-~~
+~
 
 또는
 
-~~bash
+~bash
 python server.py 2>&1 | outrrr
-~~
+~
 
 ---
 
 ## License
 
 MIT
+
