@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  docker-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:latest
+    container_name: docker-proxy
+    restart: unless-stopped
+    privileged: true
+    environment:
+      - CONTAINERS=1
+      - SERVICES=1
+      - TASKS=1
+      - NETWORKS=1
+      - VOLUMES=1
+      - INFO=1
+      - EVENTS=1
+      - POST=0
+      - BUILD=0
+      - COMMIT=0
+      - CONFIGS=0
+      - DISTRIBUTION=0
+      - EXEC=0
+      - IMAGES=0
+      - NODES=0
+      - PLUGINS=0
+      - SECRETS=0
+      - SESSION=0
+      - SWARM=0
+      - SYSTEM=0
+      - VERSION=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - outrrr_default
+
+  my-backend-app:
+    image: nginx:alpine
+    container_name: my-backend-app
+    restart: unless-stopped
+    networks:
+      - outrrr_default
+
+  outrrr-logger:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: outrrr-logger
+    restart: unless-stopped
+    environment:
+      - TARGET_CONTAINER=my-backend-app
+      - DOCKER_HOST=tcp://docker-proxy:2375
+      - NOTIFY_URL=discord://your_webhook_id@your_webhook_token
+      - CONTEXT_LENGTH=1800
+      - CONTEXT_WINDOW_DURATION=30s
+      - RATE_LIMIT_MSG_PER_MINUTE=2
+      - COOL_DOWN_DURATION=30s
+    depends_on:
+      - my-backend-app
+      - docker-proxy
+    networks:
+      - outrrr_default
+
+networks:
+  outrrr_default:
+    driver: bridge

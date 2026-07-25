@@ -1,0 +1,20 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE / Editor
+/.idea/
+/.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables & local configs
+.env
+config.yaml
+docker-compose.yml
+docker-compose.yaml
