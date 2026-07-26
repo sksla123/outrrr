@@ -28,6 +28,10 @@ services:
       - SWARM=0
       - SYSTEM=0
       - VERSION=1
+      # 유휴 연결 끊김 방지 타임아웃 추가
+      - TIMEOUT_CLIENT=1h
+      - TIMEOUT_SERVER=1h
+      - TIMEOUT_CONNECT=10s
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -54,6 +58,9 @@ services:
       - CONTEXT_WINDOW_DURATION=30s
       - RATE_LIMIT_MSG_PER_MINUTE=2
       - COOL_DOWN_DURATION=30s
+      # 재시도 설정 (0: 무한 재시도)
+      - RETRY_COUNT=0
+      - RETRY_INTERVAL_DURATION=5s
     depends_on:
       - my-backend-app
       - docker-proxy
