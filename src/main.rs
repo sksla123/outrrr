@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
 
     let (tx, rx) = mpsc::channel::<stream::LogEvent>(100);
 
-    // 2. Stdin 수집 스크립트 (재시도 루프 처리)
+    // 2. Stdin 수집 스레드 (재시도 루프 처리)
     let tx_stdin = tx.clone();
     let retry_count = app_config.retry_count;
     let retry_interval = durations.retry_interval;
@@ -33,17 +33,14 @@ async fn main() -> Result<()> {
         loop {
             let stdin = io::stdin();
             let reader = stdin.lock();
-            let mut read_any_line = false;
 
             for line in reader.lines().map_while(Result::ok) {
-                read_any_line = true;
-                attempts = 0; // 성공적으로 라인을 읽으면 재시도 카운트 리셋
+                attempts = 0;
                 if tx_stdin.blocking_send(stream::LogEvent::Line(line)).is_err() {
-                    return; // Consumer 채널이 닫힌 경우 스레드 종료
+                    return;
                 }
             }
 
-            // EOF 발생 또는 파이프가 끊어진 경우
             attempts += 1;
 
             if retry_count > 0 && attempts > retry_count {
@@ -51,12 +48,7 @@ async fn main() -> Result<()> {
                 break;
             }
 
-            let log_msg = if retry_count == 0 {
-                format!("⚠️ **로그 스트림 연결이 끊겼습니다.** ({:?} 후 무한 재시도 중... [시도 횟수: {}])", retry_interval, attempts)
-            } else {
-                format!("⚠️ **로그 스트림 연결이 끊겼습니다.** ({:?} 후 재시도 중... [{}/{}])", retry_interval, attempts, retry_count)
-            };
-            let _ = tx_stdin.blocking_send(stream::LogEvent::SystemNotice(log_msg));
+            let _ = tx_stdin.blocking_send(stream::LogEvent::Disconnected);
 
             std::thread::sleep(retry_interval);
         }
@@ -74,7 +66,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    // 4. OS 시그널 바인딩 및 소비자(Consumer) 태스크 실행
+    // 4. OS 시그널 바인딩 및 소비자 태스크 실행
     #[cfg(unix)]
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 

@@ -9,7 +9,7 @@ use tokio::time::Instant;
 pub enum LogEvent {
     Line(String),
     FlushTrigger,
-    SystemNotice(String),
+    Disconnected,
 }
 
 pub async fn message_consumer(
@@ -26,6 +26,8 @@ pub async fn message_consumer(
     let mut cooldown_until: Option<Instant> = None;
     let mut initial_message_sent = false;
 
+    let mut is_disconnected = false;
+
     while let Some(event) = rx.recv().await {
         if let Some(until) = cooldown_until {
             if Instant::now() < until {
@@ -39,6 +41,11 @@ pub async fn message_consumer(
 
         match event {
             LogEvent::Line(line) => {
+                if is_disconnected {
+                    let _ = notifier.send("🟢 **Log stream connection re-established.**").await;
+                    is_disconnected = false;
+                }
+
                 if !is_window_active {
                     last_flush_time = Instant::now();
                     is_window_active = true;
@@ -78,19 +85,21 @@ pub async fn message_consumer(
                     is_window_active = false;
                 }
             }
-            LogEvent::SystemNotice(notice) => {
-                // 스트림 연결 상태가 변경된 경우 기존 버퍼가 있다면 우선 플러시
-                if !context_buffer.is_empty() {
-                    let _ = notifier.send(&format!("```\n{}\n```", context_buffer)).await;
-                    context_buffer.clear();
-                    is_window_active = false;
+            LogEvent::Disconnected => {
+                if !is_disconnected {
+                    if !context_buffer.is_empty() {
+                        let _ = notifier.send(&format!("```\n{}\n```", context_buffer)).await;
+                        context_buffer.clear();
+                        is_window_active = false;
+                    }
+
+                    let _ = notifier.send("⚠️ **Log stream connection lost. Attempting to reconnect...**").await;
+                    is_disconnected = true;
                 }
-                let _ = notifier.send(&notice).await;
             }
         }
     }
 
-    // 루프가 종료될 때 잔여 버퍼 플러시
     if !context_buffer.is_empty() {
         let _ = notifier.send(&format!("```\n{}\n```", context_buffer)).await;
     }
