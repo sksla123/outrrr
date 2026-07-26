@@ -9,6 +9,7 @@ use tokio::time::Instant;
 pub enum LogEvent {
     Line(String),
     FlushTrigger,
+    SystemNotice(String),
 }
 
 pub async fn message_consumer(
@@ -77,10 +78,19 @@ pub async fn message_consumer(
                     is_window_active = false;
                 }
             }
+            LogEvent::SystemNotice(notice) => {
+                // 스트림 연결 상태가 변경된 경우 기존 버퍼가 있다면 우선 플러시
+                if !context_buffer.is_empty() {
+                    let _ = notifier.send(&format!("```\n{}\n```", context_buffer)).await;
+                    context_buffer.clear();
+                    is_window_active = false;
+                }
+                let _ = notifier.send(&notice).await;
+            }
         }
     }
 
-    // 루프가 종료될 때(표준 입력 EOF) 잔여 버퍼를 플러시
+    // 루프가 종료될 때 잔여 버퍼 플러시
     if !context_buffer.is_empty() {
         let _ = notifier.send(&format!("```\n{}\n```", context_buffer)).await;
     }
@@ -103,7 +113,7 @@ async fn flush_buffer(
     if *initial_message_sent && timestamps.len() >= config.rate_limit_msg_per_minute {
         let warning = "```diff\n- [WARNING]: Too many texts. Cooldown activated.\n```";
         let _ = notifier.send(warning).await;
-        
+
         *cooldown_until = Some(Instant::now() + durations.cool_down);
         buffer.clear();
         return Ok(());
@@ -118,4 +128,3 @@ async fn flush_buffer(
 
     Ok(())
 }
-

@@ -13,11 +13,24 @@ pub struct AppConfig {
     pub context_window_duration: String,
     pub rate_limit_msg_per_minute: usize,
     pub cool_down_duration: String,
+    #[serde(default = "default_retry_count")]
+    pub retry_count: usize,
+    #[serde(default = "default_retry_interval")]
+    pub retry_interval_duration: String,
+}
+
+fn default_retry_count() -> usize {
+    0
+}
+
+fn default_retry_interval() -> String {
+    "5s".to_string()
 }
 
 pub struct ParsedDurations {
     pub context_window: Duration,
     pub cool_down: Duration,
+    pub retry_interval: Duration,
 }
 
 pub fn load_config(path: &Path) -> Result<(AppConfig, ParsedDurations)> {
@@ -28,10 +41,11 @@ pub fn load_config(path: &Path) -> Result<(AppConfig, ParsedDurations)> {
         .with_context(|| format!("failed to read config {}", path.display()))?;
     let config: AppConfig = serde_yaml::from_str(&text)
         .with_context(|| format!("failed to parse YAML config {}", path.display()))?;
-    
+
     let durations = ParsedDurations {
         context_window: parse_duration_str(&config.context_window_duration)?,
         cool_down: parse_duration_str(&config.cool_down_duration)?,
+        retry_interval: parse_duration_str(&config.retry_interval_duration)?,
     };
 
     Ok((config, durations))
@@ -47,4 +61,3 @@ fn parse_duration_str(s: &str) -> Result<Duration> {
         _ => Err(anyhow!("Unsupported time unit")),
     }
 }
-
