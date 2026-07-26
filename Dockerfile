@@ -1,4 +1,4 @@
-FROM rust:alpine as builder
+FROM rust:alpine AS builder
 RUN apk add --no-cache musl-dev
 
 WORKDIR /usr/src/outrrr

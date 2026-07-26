@@ -1,3 +1,4 @@
+// src/config.rs
 use anyhow::{anyhow, Context, Result};
 use regex::Regex;
 use serde::Deserialize;
@@ -46,3 +47,4 @@ fn parse_duration_str(s: &str) -> Result<Duration> {
         _ => Err(anyhow!("Unsupported time unit")),
     }
 }
+

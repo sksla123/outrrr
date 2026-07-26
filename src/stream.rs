@@ -1,80 +1,121 @@
-// src/main.rs
-use anyhow::Result;
-use clap::Parser;
-use std::io::{self, BufRead};
+// src/stream.rs
+use crate::config::{AppConfig, ParsedDurations};
+use crate::notify::Notifier;
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
-use tokio::time::sleep;
+use tokio::time::Instant;
 
-mod cli;
-mod config;
-mod notify;
-mod stream;
+pub enum LogEvent {
+    Line(String),
+    FlushTrigger,
+}
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let args = cli::Args::parse();
-    
-    let (app_config, durations) = config::load_config(&args.config)?;
-    let notifier = notify::Notifier::new(&app_config.notify_urls)?;
-    
-    // 1. 시작 알림 발송
-    let _ = notifier.send("🟢 **`outrrr` 로그 스트리밍 프록시가 시작되었습니다.**").await;
+pub async fn message_consumer(
+    mut rx: mpsc::Receiver<LogEvent>,
+    config: AppConfig,
+    durations: ParsedDurations,
+    notifier: &Notifier,
+) -> Result<()> {
+    let mut context_buffer = String::new();
+    let mut last_flush_time = Instant::now();
+    let mut is_window_active = false;
 
-    let (tx, rx) = mpsc::channel::<stream::LogEvent>(100);
+    let mut msg_timestamps: Vec<DateTime<Utc>> = Vec::new();
+    let mut cooldown_until: Option<Instant> = None;
+    let mut initial_message_sent = false;
 
-    let tx_stdin = tx.clone();
-    tokio::task::spawn_blocking(move || {
-        let stdin = io::stdin();
-        let reader = stdin.lock();
-        for line in reader.lines().map_while(Result::ok) {
-            let _ = tx_stdin.blocking_send(stream::LogEvent::Line(line));
-        }
-    });
-
-    let tx_timer = tx.clone();
-    let timer_duration = durations.context_window;
-    tokio::spawn(async move {
-        loop {
-            sleep(timer_duration).await;
-            if tx_timer.send(stream::LogEvent::FlushTrigger).await.is_err() {
-                break;
+    while let Some(event) = rx.recv().await {
+        if let Some(until) = cooldown_until {
+            if Instant::now() < until {
+                if let LogEvent::Line(_) = event {
+                    continue;
+                }
+            } else {
+                cooldown_until = None;
             }
         }
-    });
 
-    // 2. OS 시그널 바인딩 및 소비자(Consumer) 태스크 실행
-    #[cfg(unix)]
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        match event {
+            LogEvent::Line(line) => {
+                if !is_window_active {
+                    last_flush_time = Instant::now();
+                    is_window_active = true;
+                }
 
-    #[cfg(unix)]
-    tokio::select! {
-        res = stream::message_consumer(rx, app_config, durations, &notifier) => {
-            if let Err(e) = res {
-                eprintln!("Consumer error: {:?}", e);
+                context_buffer.push_str(&line);
+                context_buffer.push('\n');
+
+                if context_buffer.len() >= config.context_length {
+                    flush_buffer(
+                        &mut context_buffer,
+                        notifier,
+                        &mut msg_timestamps,
+                        &config,
+                        &durations,
+                        &mut cooldown_until,
+                        &mut initial_message_sent,
+                    )
+                    .await?;
+                    is_window_active = false;
+                }
             }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            println!("Received Ctrl+C, shutting down...");
-        }
-        _ = sigterm.recv() => {
-            println!("Received SIGTERM, shutting down...");
+            LogEvent::FlushTrigger => {
+                if is_window_active && last_flush_time.elapsed() >= durations.context_window {
+                    if !context_buffer.is_empty() {
+                        flush_buffer(
+                            &mut context_buffer,
+                            notifier,
+                            &mut msg_timestamps,
+                            &config,
+                            &durations,
+                            &mut cooldown_until,
+                            &mut initial_message_sent,
+                        )
+                        .await?;
+                    }
+                    is_window_active = false;
+                }
+            }
         }
     }
 
-    #[cfg(not(unix))]
-    tokio::select! {
-        res = stream::message_consumer(rx, app_config, durations, &notifier) => {
-            if let Err(e) = res {
-                eprintln!("Consumer error: {:?}", e);
-            }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            println!("Received Ctrl+C, shutting down...");
-        }
+    // 루프가 종료될 때(표준 입력 EOF) 잔여 버퍼를 플러시
+    if !context_buffer.is_empty() {
+        let _ = notifier.send(&format!("```\n{}\n```", context_buffer)).await;
     }
-
-    // 3. 종료 알림 발송 (정상 파이프 종료 및 강제 시그널 종료 시 모두 동작)
-    let _ = notifier.send("🛑 **`outrrr` 로그 스트리밍 프록시가 종료되었습니다.**").await;
 
     Ok(())
 }
+
+async fn flush_buffer(
+    buffer: &mut String,
+    notifier: &Notifier,
+    timestamps: &mut Vec<DateTime<Utc>>,
+    config: &AppConfig,
+    durations: &ParsedDurations,
+    cooldown_until: &mut Option<Instant>,
+    initial_message_sent: &mut bool,
+) -> Result<()> {
+    let now = Utc::now();
+    timestamps.retain(|&ts| now.signed_duration_since(ts).num_seconds() < 60);
+
+    if *initial_message_sent && timestamps.len() >= config.rate_limit_msg_per_minute {
+        let warning = "```diff\n- [WARNING]: Too many texts. Cooldown activated.\n```";
+        let _ = notifier.send(warning).await;
+        
+        *cooldown_until = Some(Instant::now() + durations.cool_down);
+        buffer.clear();
+        return Ok(());
+    }
+
+    let payload = format!("```\n{}\n```", buffer);
+    notifier.send(&payload).await.context("outrrr failed to dispatch shoutrrr notification")?;
+
+    timestamps.push(now);
+    *initial_message_sent = true;
+    buffer.clear();
+
+    Ok(())
+}
+

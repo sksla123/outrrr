@@ -35,3 +35,4 @@ fi
 echo "[outrrr-entrypoint] Streaming logs from container '$TARGET_CONTAINER' using config '$CONFIG_PATH'..."
 
 exec docker logs -f --tail 0 "$TARGET_CONTAINER" 2>&1 | /usr/local/bin/outrrr --config "$CONFIG_PATH"
+
